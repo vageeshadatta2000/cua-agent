@@ -1,0 +1,27 @@
+{
+  "name": "cua-agent",
+  "version": "1.0.0",
+  "description": "High-performance LLM-based Computer Use Agent for web automation",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts",
+    "test": "jest"
+  },
+  "dependencies": {
+    "puppeteer": "^24.15.0",
+    "@anthropic-ai/sdk": "^0.32.0",
+    "sharp": "^0.33.0",
+    "winston": "^3.11.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "typescript": "^5.3.0",
+    "ts-node": "^10.9.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
