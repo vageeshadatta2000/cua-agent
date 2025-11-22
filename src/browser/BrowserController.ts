@@ -15,6 +15,7 @@ export class BrowserController {
   private nextTabId: number = 1;
   private config: CUAConfig['browser'];
   private logger: Logger;
+  private lastCursorPosition: Map<number, [number, number]> = new Map();
 
   constructor(config: CUAConfig['browser'], logger: Logger) {
     this.config = config;
@@ -23,16 +24,26 @@ export class BrowserController {
 
   async initialize(): Promise<void> {
     this.logger.info('Initializing browser...');
+
+    // Use a separate user data directory for Puppeteer
+    // This avoids conflicts with the main Chrome profile
+    const userDataDir = process.env.CHROME_USER_DATA_DIR ||
+      '/tmp/puppeteer-chrome-profile';
+
     this.browser = await puppeteer.launch({
       headless: this.config.headless,
       defaultViewport: this.config.viewport,
+      channel: 'chrome',
+      userDataDir,
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
         '--disable-dev-shm-usage',
         '--disable-accelerated-2d-canvas',
-        '--disable-gpu'
-      ]
+        '--disable-gpu',
+        '--disable-blink-features=AutomationControlled'
+      ],
+      ignoreDefaultArgs: ['--enable-automation']
     });
 
     // Create initial tab
@@ -60,6 +71,103 @@ export class BrowserController {
     return page;
   }
 
+  // Initialize visual cursor on page
+  private async initializeCursor(page: Page): Promise<void> {
+    await page.evaluate(() => {
+      if (document.getElementById('agent-cursor')) return;
+
+      const cursor = document.createElement('div');
+      cursor.id = 'agent-cursor';
+      cursor.style.cssText = `
+        position: fixed;
+        width: 20px;
+        height: 20px;
+        background: radial-gradient(circle, #0066FF 30%, transparent 70%);
+        border: 2px solid white;
+        border-radius: 50%;
+        pointer-events: none;
+        z-index: 999999;
+        transition: all 0.1s ease;
+        box-shadow: 0 0 15px rgba(0, 102, 255, 0.6);
+        display: none;
+      `;
+      document.body.appendChild(cursor);
+
+      const style = document.createElement('style');
+      style.id = 'agent-cursor-style';
+      style.textContent = `
+        @keyframes agent-cursor-pulse {
+          0%, 100% { transform: scale(1); opacity: 0.8; }
+          50% { transform: scale(1.2); opacity: 1; }
+        }
+        #agent-cursor.clicking {
+          animation: agent-cursor-pulse 0.3s ease-out;
+        }
+      `;
+      document.head.appendChild(style);
+    });
+  }
+
+  // Animate cursor movement
+  private async animateCursorMove(
+    page: Page,
+    tabId: number,
+    toX: number,
+    toY: number
+  ): Promise<void> {
+    await this.initializeCursor(page);
+
+    const viewport = page.viewport();
+    const lastPos = this.lastCursorPosition.get(tabId) || [
+      viewport?.width ? viewport.width / 2 : 640,
+      viewport?.height ? viewport.height / 2 : 360
+    ];
+
+    const [fromX, fromY] = lastPos;
+    const steps = 15;
+    const delay = 8;
+
+    for (let i = 0; i <= steps; i++) {
+      const progress = i / steps;
+      // Ease-out curve for smooth deceleration
+      const eased = 1 - Math.pow(1 - progress, 3);
+      const x = fromX + (toX - fromX) * eased;
+      const y = fromY + (toY - fromY) * eased;
+
+      await page.evaluate(({ x, y }) => {
+        const cursor = document.getElementById('agent-cursor');
+        if (cursor) {
+          cursor.style.display = 'block';
+          cursor.style.left = `${x - 10}px`;
+          cursor.style.top = `${y - 10}px`;
+        }
+      }, { x, y });
+
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+
+    this.lastCursorPosition.set(tabId, [toX, toY]);
+  }
+
+  // Show click animation
+  private async showClickAnimation(page: Page): Promise<void> {
+    await page.evaluate(() => {
+      const cursor = document.getElementById('agent-cursor');
+      if (cursor) {
+        cursor.classList.add('clicking');
+        setTimeout(() => cursor.classList.remove('clicking'), 300);
+      }
+    });
+  }
+
+  // Hide cursor
+  private async hideCursor(page: Page): Promise<void> {
+    await page.evaluate(() => {
+      const cursor = document.getElementById('agent-cursor');
+      if (cursor) cursor.style.display = 'none';
+    });
+  }
+
   // Screenshot
   async screenshot(tabId: number): Promise<ScreenshotResult> {
     const page = this.getPage(tabId);
@@ -85,10 +193,22 @@ export class BrowserController {
     clickCount: number = 1
   ): Promise<void> {
     const page = this.getPage(tabId);
+
+    // Animate cursor to target position
+    await this.animateCursorMove(page, tabId, coordinate[0], coordinate[1]);
+
+    // Show click animation
+    await this.showClickAnimation(page);
+
+    // Perform actual click
     await page.mouse.click(coordinate[0], coordinate[1], {
       button,
       clickCount
     });
+
+    // Hide cursor after a short delay
+    await new Promise(resolve => setTimeout(resolve, 300));
+    await this.hideCursor(page);
   }
 
   async clickByRef(tabId: number, refId: string, button: 'left' | 'right' = 'left'): Promise<void> {

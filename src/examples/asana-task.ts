@@ -8,6 +8,7 @@
  * The agent will automatically generate the execution steps based on the task.
  */
 
+import 'dotenv/config';
 import { CUAAgent } from '../core/CUAAgent';
 import { CUAConfig } from '../core/types';
 import { TaskPlanner, TaskContext } from '../core/TaskPlanner';
@@ -21,7 +22,7 @@ const config: CUAConfig = {
     timeout: 30000
   },
   llm: {
-    model: 'claude-sonnet-4-5-20250929',
+    model: 'claude-3-5-haiku-20241022',
     api_key: process.env.ANTHROPIC_API_KEY || '',
     max_tokens: 4096,
     temperature: 0

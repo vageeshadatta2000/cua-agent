@@ -11,15 +11,16 @@
     "test": "jest"
   },
   "dependencies": {
-    "puppeteer": "^24.15.0",
     "@anthropic-ai/sdk": "^0.32.0",
+    "dotenv": "^17.2.3",
+    "puppeteer": "^24.15.0",
     "sharp": "^0.33.0",
     "winston": "^3.11.0"
   },
   "devDependencies": {
     "@types/node": "^20.10.0",
-    "typescript": "^5.3.0",
-    "ts-node": "^10.9.0"
+    "ts-node": "^10.9.0",
+    "typescript": "^5.3.0"
   },
   "engines": {
     "node": ">=18.0.0"

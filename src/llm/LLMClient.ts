@@ -34,7 +34,7 @@ export class LLMClient {
       system: systemPrompt,
       messages: messages.map(m => ({
         role: m.role as 'user' | 'assistant',
-        content: m.content
+        content: m.content as any
       })),
       tools: tools.map(t => ({
         name: t.name,
@@ -62,7 +62,7 @@ export class LLMClient {
         }
         return block as LLMContentBlock;
       }),
-      stop_reason: response.stop_reason,
+      stop_reason: response.stop_reason || 'end_turn',
       usage: response.usage
     };
   }
