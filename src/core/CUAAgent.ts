@@ -13,15 +13,17 @@ import { Logger, createLogger } from '../utils/logger';
 
 const SYSTEM_PROMPT = `You are a web automation agent with multimodal capabilities. You can see screenshots, parse DOM structures, and execute precise actions in web browsers.
 
-## CRITICAL RULES
-1. Always observe (screenshot/read_page) before acting
-2. Wait 2-3 seconds after navigation for JavaScript to load
-3. Batch independent actions in single tool calls
-4. Click center of elements using coordinates from screenshots
-5. Always click input fields before typing
-6. Use explicit waits for async operations
-7. Verify critical actions with post-action screenshots
-8. Handle errors by retrying with adjusted approach
+## CRITICAL RULES (MUST FOLLOW)
+1. **ALWAYS take a screenshot FIRST** before any other action - you cannot act without seeing
+2. **NEVER click without visual confirmation** - you must see the element in a screenshot first
+3. **NEVER assume success** - always verify with a screenshot after critical actions
+4. **If find returns empty, the element doesn't exist** - DON'T click blindly at guessed coordinates
+5. Wait 3-5 seconds after navigation for JavaScript SPAs to load
+6. Batch independent actions in single tool calls
+7. Click center of elements using coordinates you ACTUALLY SEE in screenshots
+8. Always click input fields before typing
+9. Use explicit waits for async operations
+10. Handle errors by taking a new screenshot and reassessing
 
 ## AVAILABLE TOOLS
 
@@ -90,11 +92,14 @@ Before each action, briefly explain your reasoning:
 When the task is complete, provide a summary of what was accomplished.
 
 ## IMPORTANT REMINDERS
-- NEVER assume element locations without observation
+- NEVER assume element locations without observation - TAKE A SCREENSHOT FIRST
 - NEVER type before clicking input fields
-- NEVER skip waits on modern SPAs
+- NEVER skip waits on modern SPAs (wait 3-5 seconds)
 - ALWAYS click CENTER of elements, not edges
-- ALWAYS verify critical actions with screenshots`;
+- ALWAYS verify critical actions with screenshots
+- NEVER claim success without visual proof - if you didn't see it succeed in a screenshot, it didn't succeed
+- If find returns 0 results, STOP and take a screenshot to see what's actually on screen
+- Describe what you ACTUALLY SEE in each screenshot before deciding actions`;
 
 
 export class CUAAgent {
@@ -142,9 +147,30 @@ export class CUAAgent {
     }];
 
     let actionCount = 0;
+    let lastScreenshotAction = 0;
     const maxActions = this.config.agent.max_actions_per_task;
 
     while (actionCount < maxActions) {
+      // Force screenshot every 5 actions if LLM hasn't taken one
+      if (actionCount > 0 && actionCount - lastScreenshotAction >= 5) {
+        this.logger.warn('⚠️ Forcing screenshot to keep LLM grounded');
+        const screenshot = await this.toolExecutor.execute('computer', {
+          tab_id: this.state.current_tab_id,
+          action: { action: 'screenshot' }
+        }) as ScreenshotResult;
+
+        const imageBlock = this.llm.createImageBlock(screenshot.image);
+        this.messages.push({
+          role: 'user',
+          content: [
+            imageBlock,
+            { type: 'text', text: 'Periodic checkpoint: Here is the current state of the page. Describe what you see and confirm your progress.' }
+          ] as any
+        });
+
+        lastScreenshotAction = actionCount;
+      }
+
       // Get LLM response
       const response = await this.llm.chat(
         this.messages,
@@ -176,12 +202,25 @@ export class CUAAgent {
             // Handle screenshot results
             let resultContent: string | LLMContentBlock[];
             if (this.isScreenshotResult(result)) {
+              const imageBlock = this.llm.createImageBlock(result.image);
+              this.logger.info(`📸 Screenshot captured: ${result.image.length} bytes, base64 length: ${(imageBlock.source as any).data.length}`);
+
               resultContent = [
-                this.llm.createImageBlock(result.image),
-                { type: 'text', text: `Screenshot captured at ${result.timestamp}` }
+                imageBlock,
+                { type: 'text', text: `Screenshot captured at ${result.timestamp}. Analyze this image carefully before taking action.` }
               ];
               this.state.last_screenshot = result;
             } else {
+              // Log find results for debugging
+              if (block.name === 'find') {
+                const findResult = result as { elements: any[], total: number };
+                if (findResult.total === 0) {
+                  this.logger.warn(`⚠️ Find returned 0 results for query. Element may not exist.`);
+                } else {
+                  this.logger.info(`🔍 Find returned ${findResult.total} elements`);
+                }
+              }
+
               resultContent = typeof result === 'string'
                 ? result
                 : JSON.stringify(result, null, 2);
@@ -192,6 +231,11 @@ export class CUAAgent {
               tool_use_id: block.id,
               content: resultContent as any
             });
+
+            // Track screenshot actions
+            if (block.name === 'computer' && this.isScreenshotResult(result)) {
+              lastScreenshotAction = actionCount;
+            }
 
             // Log action
             this.state.action_history.push({
