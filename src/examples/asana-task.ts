@@ -30,7 +30,7 @@ const config: CUAConfig = {
   agent: {
     max_actions_per_task: 50,
     max_retries: 3,
-    default_wait_after_navigation: 2000,
+    default_wait_after_navigation: 5000, // Fix: Increased for SPAs like Asana
     screenshot_quality: 80
   }
 };

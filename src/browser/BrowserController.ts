@@ -16,6 +16,7 @@ export class BrowserController {
   private config: CUAConfig['browser'];
   private logger: Logger;
   private lastCursorPosition: Map<number, [number, number]> = new Map();
+  private isAnimating: boolean = false;
 
   constructor(config: CUAConfig['browser'], logger: Logger) {
     this.config = config;
@@ -66,7 +67,9 @@ export class BrowserController {
   private getPage(tabId: number): Page {
     const page = this.pages.get(tabId);
     if (!page) {
-      throw new Error(`Tab ${tabId} not found`);
+      // Fix: Better error message with available tabs
+      const availableTabs = Array.from(this.pages.keys()).join(', ');
+      throw new Error(`Tab ${tabId} not found. Available tabs: [${availableTabs}]`);
     }
     return page;
   }
@@ -123,17 +126,8 @@ export class BrowserController {
       viewport?.height ? viewport.height / 2 : 360
     ];
 
-    const [fromX, fromY] = lastPos;
-    const steps = 15;
-    const delay = 8;
-
-    for (let i = 0; i <= steps; i++) {
-      const progress = i / steps;
-      // Ease-out curve for smooth deceleration
-      const eased = 1 - Math.pow(1 - progress, 3);
-      const x = fromX + (toX - fromX) * eased;
-      const y = fromY + (toY - fromY) * eased;
-
+    // Fix: Skip animation if already animating to prevent race conditions
+    if (this.isAnimating) {
       await page.evaluate(({ x, y }) => {
         const cursor = document.getElementById('agent-cursor');
         if (cursor) {
@@ -141,12 +135,41 @@ export class BrowserController {
           cursor.style.left = `${x - 10}px`;
           cursor.style.top = `${y - 10}px`;
         }
-      }, { x, y });
-
-      await new Promise(resolve => setTimeout(resolve, delay));
+      }, { x: toX, y: toY });
+      this.lastCursorPosition.set(tabId, [toX, toY]);
+      return;
     }
 
-    this.lastCursorPosition.set(tabId, [toX, toY]);
+    this.isAnimating = true;
+
+    try {
+      const [fromX, fromY] = lastPos;
+      const steps = 15;
+      const delay = 8;
+
+      for (let i = 0; i <= steps; i++) {
+        const progress = i / steps;
+        // Ease-out curve for smooth deceleration
+        const eased = 1 - Math.pow(1 - progress, 3);
+        const x = fromX + (toX - fromX) * eased;
+        const y = fromY + (toY - fromY) * eased;
+
+        await page.evaluate(({ x, y }) => {
+          const cursor = document.getElementById('agent-cursor');
+          if (cursor) {
+            cursor.style.display = 'block';
+            cursor.style.left = `${x - 10}px`;
+            cursor.style.top = `${y - 10}px`;
+          }
+        }, { x, y });
+
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+
+      this.lastCursorPosition.set(tabId, [toX, toY]);
+    } finally {
+      this.isAnimating = false;
+    }
   }
 
   // Show click animation
@@ -459,8 +482,12 @@ export class BrowserController {
           return childContent;
         }
 
-        const refId = `ref_${refCounter++}`;
-        el.setAttribute('data-ref', refId);
+        // Fix: Only add ref if it doesn't exist to prevent flickering
+        let refId = el.getAttribute('data-ref');
+        if (!refId) {
+          refId = `ref_${refCounter++}`;
+          el.setAttribute('data-ref', refId);
+        }
 
         const role = getRole(el);
         const name = getAccessibleName(el);
@@ -503,7 +530,12 @@ export class BrowserController {
         const placeholder = el.getAttribute('placeholder')?.toLowerCase() || '';
         const title = el.getAttribute('title')?.toLowerCase() || '';
         const id = el.id?.toLowerCase() || '';
-        const className = el.className?.toLowerCase() || '';
+        // Fix: Handle SVG elements where className is SVGAnimatedString
+        const className = el.className && typeof el.className === 'string'
+          ? el.className.toLowerCase()
+          : el.className && typeof el.className === 'object' && (el.className as any).baseVal
+            ? (el.className as any).baseVal.toLowerCase()
+            : '';
 
         return text.includes(query) ||
                ariaLabel.includes(query) ||

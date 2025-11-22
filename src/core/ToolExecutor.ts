@@ -102,14 +102,20 @@ export class ToolExecutor {
             action.action === 'double_click' ? 2 : 1
           );
         }
+        // Fix: Add small delay after click for browser to process
+        await new Promise(resolve => setTimeout(resolve, 100));
         break;
 
       case 'type':
         await this.browser.type(tabId, action.text);
+        // Fix: Add small delay after typing
+        await new Promise(resolve => setTimeout(resolve, 50));
         break;
 
       case 'key':
         await this.browser.pressKey(tabId, action.text);
+        // Fix: Add small delay after key press
+        await new Promise(resolve => setTimeout(resolve, 50));
         break;
 
       case 'wait':
